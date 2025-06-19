@@ -1,0 +1,134 @@
+diff --git a/0.py b/1.py
+index cde41f4..576db12 100644
+--- a/0.py
++++ b/1.py
+@@ -13,6 +13,8 @@ for your modeling problem.
+ '''
+ 
+ import re
++from typing import List
++
+ import lief
+ import hashlib
+ import numpy as np
+@@ -30,6 +32,7 @@ class FeatureType(object):
+ 
+     name = ''
+     dim = 0
++    raw_features = None
+ 
+     def __repr__(self):
+         return '{}({})'.format(self.name, self.dim)
+@@ -47,16 +50,27 @@ class FeatureType(object):
+         if there are significant speedups to be gained from combining the two functions. '''
+         return self.process_raw_features(self.raw_features(bytez, lief_binary))
+ 
++    @staticmethod
++    def save_raw_features(func):
++        def wrapped(self, *args, **kwargs):
++            result = func(self, *args, **kwargs)
++            self.raw_features = result
++            return result
++
++        return wrapped
++
+ 
+ class ByteHistogram(FeatureType):
+     ''' Byte histogram (count + non-normalized) over the entire binary file '''
+ 
+     name = 'histogram'
+     dim = 256
++    raw_features: List[int] = None
+ 
+     def __init__(self):
+         super(FeatureType, self).__init__()
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         counts = np.bincount(np.frombuffer(bytez, dtype=np.uint8), minlength=256)
+         return counts.tolist()
+@@ -96,6 +110,7 @@ class ByteEntropyHistogram(FeatureType):
+ 
+         return Hbin, c
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         output = np.zeros((16, 16), dtype=np.int)
+         a = np.frombuffer(bytez, dtype=np.uint8)
+@@ -137,6 +152,7 @@ class SectionInfo(FeatureType):
+     def _properties(s):
+         return [str(c).split('.')[-1] for c in s.characteristics_lists]
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         if lief_binary is None:
+             return {"entry": "", "sections": []}
+@@ -189,7 +205,7 @@ class SectionInfo(FeatureType):
+         section_entropy_hashed = FeatureHasher(50, input_type="pair").transform([section_entropy]).toarray()[0]
+         section_vsize = [(s['name'], s['vsize']) for s in sections]
+         section_vsize_hashed = FeatureHasher(50, input_type="pair").transform([section_vsize]).toarray()[0]
+-        entry_name_hashed = FeatureHasher(50, input_type="string").transform([raw_obj['entry']]).toarray()[0]
++        entry_name_hashed = FeatureHasher(50, input_type="string").transform([[raw_obj['entry']]]).toarray()[0]
+         characteristics = [p for s in sections for p in s['props'] if s['name'] == raw_obj['entry']]
+         characteristics_hashed = FeatureHasher(50, input_type="string").transform([characteristics]).toarray()[0]
+ 
+@@ -211,6 +227,7 @@ class ImportsInfo(FeatureType):
+     def __init__(self):
+         super(FeatureType, self).__init__()
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         imports = {}
+         if lief_binary is None:
+@@ -254,6 +271,7 @@ class ExportsInfo(FeatureType):
+     def __init__(self):
+         super(FeatureType, self).__init__()
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         if lief_binary is None:
+             return []
+@@ -284,6 +302,7 @@ class GeneralFileInfo(FeatureType):
+     def __init__(self):
+         super(FeatureType, self).__init__()
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         if lief_binary is None:
+             return {
+@@ -330,6 +349,7 @@ class HeaderFileInfo(FeatureType):
+     def __init__(self):
+         super(FeatureType, self).__init__()
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         raw_obj = {}
+         raw_obj['coff'] = {'timestamp': 0, 'machine': "", 'characteristics': []}
+@@ -416,6 +436,7 @@ class StringExtractor(FeatureType):
+         # crude evidence of an MZ header (dropper?) somewhere in the byte stream
+         self._mz = re.compile(b'MZ')
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         allstrings = self._allstrings.findall(bytez)
+         if allstrings:
+@@ -471,6 +492,7 @@ class DataDirectories(FeatureType):
+             "BOUND_IMPORT", "IAT", "DELAY_IMPORT_DESCRIPTOR", "CLR_RUNTIME_HEADER"
+         ]
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez, lief_binary):
+         output = []
+         if lief_binary is None:
+@@ -533,8 +555,10 @@ class PEFeatureExtractor(object):
+             raise Exception(f"EMBER feature version must be 1 or 2. Not {feature_version}")
+         self.dim = sum([fe.dim for fe in self.features])
+ 
++    @FeatureType.save_raw_features
+     def raw_features(self, bytez):
+-        lief_errors = (lief.bad_format, lief.bad_file, lief.pe_error, lief.parser_error, lief.read_out_of_bound,
++        lief_errors = (lief.lief_errors.corrupted, lief.lief_errors.file_format_error, lief.lief_errors.file_error,
++                       lief.lief_errors.parsing_error, lief.lief_errors.read_out_of_bound,
+                        RuntimeError)
+         try:
+             lief_binary = lief.PE.parse(list(bytez))
