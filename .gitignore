@@ -1,0 +1,55 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Scrapy stuff:
+.scrapy
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+!*GIT-TRACKED.ipynb
+
+
+# IPython
+profile_default/
+ipython_config.py
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Environments
+env/
+*.env
+
+# IDEA
+
+.idea/
+.vscode/
+
+# TMP files
+*.exe
+*.mbazaar
+*.dot
+*.svg
+.coverage
+*.lcov
+*plotly.html
+
+dist/
+*egg-info/
+
+# Tensorboard log
+**/events.out.tfevents.*
+
+# Pytorch model checkpoints
+
+**/*.pth.tar
