@@ -12,17 +12,106 @@ It may be useful to do feature selection to reduce this set of features to a mea
 for your modeling problem.
 '''
 
-import re
-import lief
 import hashlib
-import numpy as np
-import os
 import json
+import os
+import re
+from typing import NamedTuple, TypedDict, List, Dict
+
+import lief
+import numpy as np
 from sklearn.feature_extraction import FeatureHasher
 
 LIEF_MAJOR, LIEF_MINOR, _ = lief.__version__.split('.')
-LIEF_EXPORT_OBJECT = int(LIEF_MAJOR) > 0 or ( int(LIEF_MAJOR)==0 and int(LIEF_MINOR) >= 10 )
+LIEF_EXPORT_OBJECT = int(LIEF_MAJOR) > 0 or (int(LIEF_MAJOR) == 0 and int(LIEF_MINOR) >= 10)
 LIEF_HAS_SIGNATURE = int(LIEF_MAJOR) > 0 or (int(LIEF_MAJOR) == 0 and int(LIEF_MINOR) >= 11)
+
+# ========================
+# Type annotations for raw features
+# ========================
+
+FeatureByteHistogram = List[int]
+FeatureByteEntropyHistogram = List[int]
+FeatureImportsInfo = Dict[str, List[str]]
+FeatureExportsInfo = List[str]
+
+
+class SectionInfo(TypedDict):
+    name: str
+    size: int
+    entropy: float
+    vsize: int
+    props: List[str]
+
+
+class FeatureSectionInfo(TypedDict):
+    entry: str
+    sections: List[SectionInfo]
+
+
+class FeatureGeneralFileInfo(TypedDict):
+    size: int
+    vsize: int
+    has_debug: bool
+    exports: int
+    imports: int
+    has_relocations: bool
+    has_resources: bool
+    has_signature: bool
+    has_tls: bool
+    symbols: int
+
+
+class HeaderFileInfoCoff(TypedDict):
+    timestamp: int
+    machine: str
+    characteristics: List[str]
+
+
+class HeaderFileInfoOptional(TypedDict):
+    subsystem: str
+    dll_characteristics: List[str]
+    magic: str
+    major_image_version: int
+    minor_image_version: int
+    major_linker_version: int
+    minor_linker_version: int
+    major_operating_system_version: int
+    minor_operating_system_version: int
+    major_subsystem_version: int
+    minor_subsystem_version: int
+    sizeof_code: int
+    sizeof_headers: int
+    sizeof_heap_commit: int
+
+
+class FeatureHeaderFileInfo(TypedDict):
+    coff: HeaderFileInfoCoff
+    optional: HeaderFileInfoOptional
+
+
+class FeatureStringExtractor(TypedDict):
+    numstrings: int
+    avlength: float
+    printabledist: List[float]  # store non-normalized histogram
+    printables: int
+    entropy: float
+    paths: int
+    urls: int
+    registry: int
+    MZ: int
+
+
+class DataDirectoryInfo(TypedDict):
+    name: str
+    size: int
+    virtual_address: int
+
+
+FeatureDataDirectories = List[DataDirectoryInfo]
+
+
+# ========================
 
 
 class FeatureType(object):
@@ -30,6 +119,7 @@ class FeatureType(object):
 
     name = ''
     dim = 0
+    raw_features = None
 
     def __repr__(self):
         return '{}({})'.format(self.name, self.dim)
@@ -38,14 +128,23 @@ class FeatureType(object):
         ''' Generate a JSON-able representation of the file '''
         raise (NotImplementedError)
 
-    def process_raw_features(self, raw_obj):
+    def process_raw_features(self, raw_obj) -> np.ndarray:
         ''' Generate a feature vector from the raw features '''
         raise (NotImplementedError)
 
-    def feature_vector(self, bytez, lief_binary):
+    def feature_vector(self, bytez, lief_binary) -> np.ndarray:
         ''' Directly calculate the feature vector from the sample itself. This should only be implemented differently
         if there are significant speedups to be gained from combining the two functions. '''
         return self.process_raw_features(self.raw_features(bytez, lief_binary))
+
+    @staticmethod
+    def save_raw_features(func):
+        def wrapped(self, *args, **kwargs):
+            result = func(self, *args, **kwargs)
+            self.raw_features = result
+            return result
+
+        return wrapped
 
 
 class ByteHistogram(FeatureType):
@@ -53,11 +152,13 @@ class ByteHistogram(FeatureType):
 
     name = 'histogram'
     dim = 256
+    raw_features: FeatureByteHistogram
 
     def __init__(self):
         super(FeatureType, self).__init__()
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureByteHistogram:
         counts = np.bincount(np.frombuffer(bytez, dtype=np.uint8), minlength=256)
         return counts.tolist()
 
@@ -76,6 +177,7 @@ class ByteEntropyHistogram(FeatureType):
 
     name = 'byteentropy'
     dim = 256
+    raw_features: FeatureByteEntropyHistogram
 
     def __init__(self, step=1024, window=2048):
         super(FeatureType, self).__init__()
@@ -96,7 +198,8 @@ class ByteEntropyHistogram(FeatureType):
 
         return Hbin, c
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureByteEntropyHistogram:
         output = np.zeros((16, 16), dtype=np.int)
         a = np.frombuffer(bytez, dtype=np.uint8)
         if a.shape[0] < self.window:
@@ -129,6 +232,7 @@ class SectionInfo(FeatureType):
 
     name = 'section'
     dim = 5 + 50 + 50 + 50 + 50 + 50
+    raw_features: FeatureSectionInfo
 
     def __init__(self):
         super(FeatureType, self).__init__()
@@ -137,7 +241,8 @@ class SectionInfo(FeatureType):
     def _properties(s):
         return [str(c).split('.')[-1] for c in s.characteristics_lists]
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureSectionInfo:
         if lief_binary is None:
             return {"entry": "", "sections": []}
 
@@ -149,15 +254,15 @@ class SectionInfo(FeatureType):
                 if section is None:
                     raise lief.not_found
                 entry_section = section.name
-            else: # lief < 0.12
+            else:  # lief < 0.12
                 entry_section = lief_binary.section_from_offset(lief_binary.entrypoint).name
         except lief.not_found:
-                # bad entry point, let's find the first executable section
-                entry_section = ""
-                for s in lief_binary.sections:
-                    if lief.PE.SECTION_CHARACTERISTICS.MEM_EXECUTE in s.characteristics_lists:
-                        entry_section = s.name
-                        break
+            # bad entry point, let's find the first executable section
+            entry_section = ""
+            for s in lief_binary.sections:
+                if lief.PE.SECTION_CHARACTERISTICS.MEM_EXECUTE in s.characteristics_lists:
+                    entry_section = s.name
+                    break
 
         raw_obj = {"entry": entry_section}
         raw_obj["sections"] = [{
@@ -189,7 +294,7 @@ class SectionInfo(FeatureType):
         section_entropy_hashed = FeatureHasher(50, input_type="pair").transform([section_entropy]).toarray()[0]
         section_vsize = [(s['name'], s['vsize']) for s in sections]
         section_vsize_hashed = FeatureHasher(50, input_type="pair").transform([section_vsize]).toarray()[0]
-        entry_name_hashed = FeatureHasher(50, input_type="string").transform([raw_obj['entry']]).toarray()[0]
+        entry_name_hashed = FeatureHasher(50, input_type="string").transform([[raw_obj['entry']]]).toarray()[0]
         characteristics = [p for s in sections for p in s['props'] if s['name'] == raw_obj['entry']]
         characteristics_hashed = FeatureHasher(50, input_type="string").transform([characteristics]).toarray()[0]
 
@@ -207,11 +312,13 @@ class ImportsInfo(FeatureType):
 
     name = 'imports'
     dim = 1280
+    raw_features: FeatureImportsInfo
 
     def __init__(self):
         super(FeatureType, self).__init__()
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureImportsInfo:
         imports = {}
         if lief_binary is None:
             return imports
@@ -250,11 +357,13 @@ class ExportsInfo(FeatureType):
 
     name = 'exports'
     dim = 128
+    raw_features = FeatureExportsInfo
 
     def __init__(self):
         super(FeatureType, self).__init__()
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureExportsInfo:
         if lief_binary is None:
             return []
 
@@ -266,7 +375,6 @@ class ExportsInfo(FeatureType):
         else:
             # export is a string (LIEF 0.9.0 and earlier)
             clipped_exports = [export[:10000] for export in lief_binary.exported_functions]
-
 
         return clipped_exports
 
@@ -280,11 +388,13 @@ class GeneralFileInfo(FeatureType):
 
     name = 'general'
     dim = 10
+    raw_features = FeatureGeneralFileInfo
 
     def __init__(self):
         super(FeatureType, self).__init__()
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureGeneralFileInfo:
         if lief_binary is None:
             return {
                 'size': len(bytez),
@@ -318,7 +428,7 @@ class GeneralFileInfo(FeatureType):
             raw_obj['has_relocations'], raw_obj['has_resources'], raw_obj['has_signature'], raw_obj['has_tls'],
             raw_obj['symbols']
         ],
-                          dtype=np.float32)
+            dtype=np.float32)
 
 
 class HeaderFileInfo(FeatureType):
@@ -326,11 +436,13 @@ class HeaderFileInfo(FeatureType):
 
     name = 'header'
     dim = 62
+    raw_features: FeatureHeaderFileInfo
 
     def __init__(self):
         super(FeatureType, self).__init__()
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureHeaderFileInfo:
         raw_obj = {}
         raw_obj['coff'] = {'timestamp': 0, 'machine': "", 'characteristics': []}
         raw_obj['optional'] = {
@@ -402,6 +514,7 @@ class StringExtractor(FeatureType):
 
     name = 'strings'
     dim = 1 + 1 + 1 + 96 + 1 + 1 + 1 + 1 + 1
+    raw_features: FeatureStringExtractor
 
     def __init__(self):
         super(FeatureType, self).__init__()
@@ -416,7 +529,8 @@ class StringExtractor(FeatureType):
         # crude evidence of an MZ header (dropper?) somewhere in the byte stream
         self._mz = re.compile(b'MZ')
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureStringExtractor:
         allstrings = self._allstrings.findall(bytez)
         if allstrings:
             # statistics about strings:
@@ -462,6 +576,7 @@ class DataDirectories(FeatureType):
 
     name = 'datadirectories'
     dim = 15 * 2
+    raw_features: FeatureDataDirectories
 
     def __init__(self):
         super(FeatureType, self).__init__()
@@ -471,7 +586,8 @@ class DataDirectories(FeatureType):
             "BOUND_IMPORT", "IAT", "DELAY_IMPORT_DESCRIPTOR", "CLR_RUNTIME_HEADER"
         ]
 
-    def raw_features(self, bytez, lief_binary):
+    @FeatureType.save_raw_features
+    def raw_features(self, bytez, lief_binary) -> FeatureDataDirectories:
         output = []
         if lief_binary is None:
             return output
@@ -496,18 +612,42 @@ class DataDirectories(FeatureType):
 class PEFeatureExtractor(object):
     ''' Extract useful features from a PE file, and return as a vector of fixed size. '''
 
+    features: List[FeatureType]
+
+    class Features(NamedTuple):
+        byte_histogram: ByteHistogram
+        byte_entropy_histogram: ByteEntropyHistogram
+        string_extractor: StringExtractor
+        general_file_info: GeneralFileInfo
+        header_file_info: HeaderFileInfo
+        section_info: SectionInfo
+        imports_info: ImportsInfo
+        exports_info: ExportsInfo
+
+    named_features: Features
+
     def __init__(self, feature_version=2, print_feature_warning=True, features_file=''):
         self.features = []
         features = {
-                    'ByteHistogram': ByteHistogram(),
-                    'ByteEntropyHistogram': ByteEntropyHistogram(),
-                    'StringExtractor': StringExtractor(),
-                    'GeneralFileInfo': GeneralFileInfo(),
-                    'HeaderFileInfo': HeaderFileInfo(),
-                    'SectionInfo': SectionInfo(),
-                    'ImportsInfo': ImportsInfo(),
-                    'ExportsInfo': ExportsInfo()
-            }
+            'ByteHistogram': ByteHistogram(),
+            'ByteEntropyHistogram': ByteEntropyHistogram(),
+            'StringExtractor': StringExtractor(),
+            'GeneralFileInfo': GeneralFileInfo(),
+            'HeaderFileInfo': HeaderFileInfo(),
+            'SectionInfo': SectionInfo(),
+            'ImportsInfo': ImportsInfo(),
+            'ExportsInfo': ExportsInfo()
+        }
+        self.features_ = self.Features(
+            byte_histogram=features['ByteHistogram'],
+            byte_entropy_histogram=features['ByteEntropyHistogram'],
+            string_extractor=features['StringExtractor'],
+            general_file_info=features['GeneralFileInfo'],
+            header_file_info=features['HeaderFileInfo'],
+            section_info=features['SectionInfo'],
+            imports_info=features['ImportsInfo'],
+            exports_info=features['ExportsInfo']
+        )
 
         if os.path.exists(features_file):
             with open(features_file, encoding='utf8') as f:
@@ -520,21 +660,24 @@ class PEFeatureExtractor(object):
             if not lief.__version__.startswith("0.8.3"):
                 if print_feature_warning:
                     print(f"WARNING: EMBER feature version 1 were computed using lief version 0.8.3-18d5b75")
-                    print(f"WARNING:   lief version {lief.__version__} found instead. There may be slight inconsistencies")
+                    print(
+                        f"WARNING:   lief version {lief.__version__} found instead. There may be slight inconsistencies")
                     print(f"WARNING:   in the feature calculations.")
         elif feature_version == 2:
             self.features.append(DataDirectories())
             if not lief.__version__.startswith("0.9.0"):
                 if print_feature_warning:
                     print(f"WARNING: EMBER feature version 2 were computed using lief version 0.9.0-")
-                    print(f"WARNING:   lief version {lief.__version__} found instead. There may be slight inconsistencies")
+                    print(
+                        f"WARNING:   lief version {lief.__version__} found instead. There may be slight inconsistencies")
                     print(f"WARNING:   in the feature calculations.")
         else:
             raise Exception(f"EMBER feature version must be 1 or 2. Not {feature_version}")
         self.dim = sum([fe.dim for fe in self.features])
 
     def raw_features(self, bytez):
-        lief_errors = (lief.bad_format, lief.bad_file, lief.pe_error, lief.parser_error, lief.read_out_of_bound,
+        lief_errors = (lief.lief_errors.corrupted, lief.lief_errors.file_format_error, lief.lief_errors.file_error,
+                       lief.lief_errors.parsing_error, lief.lief_errors.read_out_of_bound,
                        RuntimeError)
         try:
             lief_binary = lief.PE.parse(list(bytez))
