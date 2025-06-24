@@ -1,5 +1,9 @@
 import hashlib
+from typing import Tuple
 
+import numpy as np
+
+from ember.features import PEFeatureExtractor
 from util.misc import display_size
 
 
@@ -37,3 +41,7 @@ class Sample:
     md5={self.md5}
     sha256={self.sha256})
     size={self.get_size_fmt()})""")
+
+    def get_ember_features(self) -> Tuple[np.ndarray, PEFeatureExtractor]:
+        ex = PEFeatureExtractor(2, print_feature_warning=False)
+        return ex.feature_vector(self.content), ex

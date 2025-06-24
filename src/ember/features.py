@@ -120,6 +120,7 @@ class FeatureType(object):
     name = ''
     dim = 0
     raw_features = None
+    vector: np.ndarray = None
 
     def __repr__(self):
         return '{}({})'.format(self.name, self.dim)
@@ -146,6 +147,26 @@ class FeatureType(object):
 
         return wrapped
 
+    @staticmethod
+    def save_vector(func):
+        def wrapped(self, *args, **kwargs):
+            result = func(self, *args, **kwargs)
+            self.vector = result
+            return result
+
+        return wrapped
+
+    def __str__(self):
+        buff = f"{self.name} ({self.dim}) {self.vector[:5]} \n  Raw features: "
+        try:
+            buff += json.dumps(self.displayable_data(), indent=2)
+        except Exception:
+            buff += "N/A"
+        return buff
+
+    def displayable_data(self):
+        return self.raw_features
+
 
 class ByteHistogram(FeatureType):
     ''' Byte histogram (count + non-normalized) over the entire binary file '''
@@ -162,11 +183,15 @@ class ByteHistogram(FeatureType):
         counts = np.bincount(np.frombuffer(bytez, dtype=np.uint8), minlength=256)
         return counts.tolist()
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         counts = np.array(raw_obj, dtype=np.float32)
         sum = counts.sum()
         normalized = counts / sum
         return normalized
+
+    def displayable_data(self):
+        return None
 
 
 class ByteEntropyHistogram(FeatureType):
@@ -200,7 +225,7 @@ class ByteEntropyHistogram(FeatureType):
 
     @FeatureType.save_raw_features
     def raw_features(self, bytez, lief_binary) -> FeatureByteEntropyHistogram:
-        output = np.zeros((16, 16), dtype=np.int)
+        output = np.zeros((16, 16), dtype=np.int32)
         a = np.frombuffer(bytez, dtype=np.uint8)
         if a.shape[0] < self.window:
             Hbin, c = self._entropy_bin_counts(a)
@@ -218,11 +243,18 @@ class ByteEntropyHistogram(FeatureType):
 
         return output.flatten().tolist()
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         counts = np.array(raw_obj, dtype=np.float32)
         sum = counts.sum()
         normalized = counts / sum
         return normalized
+
+    def displayable_data(self):
+        return {
+            "window": self.window,
+            "step": self.step
+        }
 
 
 class SectionInfo(FeatureType):
@@ -274,6 +306,7 @@ class SectionInfo(FeatureType):
         } for s in lief_binary.sections]
         return raw_obj
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         sections = raw_obj['sections']
         general = [
@@ -337,6 +370,7 @@ class ImportsInfo(FeatureType):
 
         return imports
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         # unique libraries
         libraries = list(set([l.lower() for l in raw_obj.keys()]))
@@ -378,6 +412,7 @@ class ExportsInfo(FeatureType):
 
         return clipped_exports
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         exports_hashed = FeatureHasher(128, input_type="string").transform([raw_obj]).toarray()[0]
         return exports_hashed.astype(np.float32)
@@ -422,6 +457,7 @@ class GeneralFileInfo(FeatureType):
             'symbols': len(lief_binary.symbols),
         }
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         return np.asarray([
             raw_obj['size'], raw_obj['vsize'], raw_obj['has_debug'], raw_obj['exports'], raw_obj['imports'],
@@ -487,6 +523,7 @@ class HeaderFileInfo(FeatureType):
         raw_obj['optional']['sizeof_heap_commit'] = lief_binary.optional_header.sizeof_heap_commit
         return raw_obj
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         return np.hstack([
             raw_obj['coff']['timestamp'],
@@ -515,6 +552,9 @@ class StringExtractor(FeatureType):
     name = 'strings'
     dim = 1 + 1 + 1 + 96 + 1 + 1 + 1 + 1 + 1
     raw_features: FeatureStringExtractor
+    paths: List[str]
+    urls: List[str]
+    registry: List[str]
 
     def __init__(self):
         super(FeatureType, self).__init__()
@@ -550,18 +590,23 @@ class StringExtractor(FeatureType):
             H = 0
             csum = 0
 
+        self.paths = list([t.decode('utf-8') for t in set(self._paths.findall(bytez))])
+        self.urls = list([t.decode('utf-8') for t in set(self._urls.findall(bytez))])
+        self.registry = list([t.decode('utf-8') for t in set(self._registry.findall(bytez))])
+
         return {
             'numstrings': len(allstrings),
             'avlength': avlength,
             'printabledist': c.tolist(),  # store non-normalized histogram
             'printables': int(csum),
             'entropy': float(H),
-            'paths': len(self._paths.findall(bytez)),
-            'urls': len(self._urls.findall(bytez)),
-            'registry': len(self._registry.findall(bytez)),
+            'paths': len(self.paths),
+            'urls': len(self.urls),
+            'registry': len(self.registry),
             'MZ': len(self._mz.findall(bytez))
         }
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         hist_divisor = float(raw_obj['printables']) if raw_obj['printables'] > 0 else 1.0
         return np.hstack([
@@ -569,6 +614,14 @@ class StringExtractor(FeatureType):
             np.asarray(raw_obj['printabledist']) / hist_divisor, raw_obj['entropy'], raw_obj['paths'], raw_obj['urls'],
             raw_obj['registry'], raw_obj['MZ']
         ]).astype(np.float32)
+
+    def displayable_data(self):
+        data = self.raw_features.copy()
+        data.pop('printabledist', None)
+        data['paths'] = self.paths
+        data['urls'] = self.urls
+        data['registry'] = self.registry
+        return data
 
 
 class DataDirectories(FeatureType):
@@ -600,12 +653,13 @@ class DataDirectories(FeatureType):
             })
         return output
 
+    @FeatureType.save_vector
     def process_raw_features(self, raw_obj):
         features = np.zeros(2 * len(self._name_order), dtype=np.float32)
         for i in range(len(self._name_order)):
             if i < len(raw_obj):
-                features[2 * i] = raw_obj[i]["size"]
-                features[2 * i + 1] = raw_obj[i]["virtual_address"]
+                features[2 * i] = raw_obj[i]['size']
+                features[2 * i + 1] = raw_obj[i]['virtual_address']
         return features
 
 
@@ -615,14 +669,15 @@ class PEFeatureExtractor(object):
     features: List[FeatureType]
 
     class Features(NamedTuple):
-        byte_histogram: ByteHistogram
-        byte_entropy_histogram: ByteEntropyHistogram
-        string_extractor: StringExtractor
-        general_file_info: GeneralFileInfo
-        header_file_info: HeaderFileInfo
-        section_info: SectionInfo
-        imports_info: ImportsInfo
-        exports_info: ExportsInfo
+        byte_histogram: ByteHistogram = None
+        byte_entropy_histogram: ByteEntropyHistogram = None
+        string_extractor: StringExtractor = None
+        general_file_info: GeneralFileInfo = None
+        header_file_info: HeaderFileInfo = None
+        data_directories: DataDirectories = None
+        section_info: SectionInfo = None
+        imports_info: ImportsInfo = None
+        exports_info: ExportsInfo = None
 
     named_features: Features
 
@@ -638,16 +693,6 @@ class PEFeatureExtractor(object):
             'ImportsInfo': ImportsInfo(),
             'ExportsInfo': ExportsInfo()
         }
-        self.features_ = self.Features(
-            byte_histogram=features['ByteHistogram'],
-            byte_entropy_histogram=features['ByteEntropyHistogram'],
-            string_extractor=features['StringExtractor'],
-            general_file_info=features['GeneralFileInfo'],
-            header_file_info=features['HeaderFileInfo'],
-            section_info=features['SectionInfo'],
-            imports_info=features['ImportsInfo'],
-            exports_info=features['ExportsInfo']
-        )
 
         if os.path.exists(features_file):
             with open(features_file, encoding='utf8') as f:
@@ -673,6 +718,7 @@ class PEFeatureExtractor(object):
                     print(f"WARNING:   in the feature calculations.")
         else:
             raise Exception(f"EMBER feature version must be 1 or 2. Not {feature_version}")
+        self.named_features = self.Features(*self.features)
         self.dim = sum([fe.dim for fe in self.features])
 
     def raw_features(self, bytez):
