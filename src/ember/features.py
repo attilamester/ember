@@ -284,15 +284,15 @@ class SectionInfo(FeatureType):
             if int(LIEF_MAJOR) > 0 or (int(LIEF_MAJOR) == 0 and int(LIEF_MINOR) >= 12):
                 section = lief_binary.section_from_rva(lief_binary.entrypoint - lief_binary.imagebase)
                 if section is None:
-                    raise lief.not_found
+                    raise RuntimeError
                 entry_section = section.name
             else:  # lief < 0.12
                 entry_section = lief_binary.section_from_offset(lief_binary.entrypoint).name
-        except lief.not_found:
+        except RuntimeError:
             # bad entry point, let's find the first executable section
             entry_section = ""
             for s in lief_binary.sections:
-                if lief.PE.SECTION_CHARACTERISTICS.MEM_EXECUTE in s.characteristics_lists:
+                if lief.PE.Section.CHARACTERISTICS.MEM_EXECUTE in s.characteristics_lists:
                     entry_section = s.name
                     break
 
@@ -560,12 +560,12 @@ class StringExtractor(FeatureType):
         super(FeatureType, self).__init__()
         # all consecutive runs of 0x20 - 0x7f that are 5+ characters
         self._allstrings = re.compile(b'[\x20-\x7f]{5,}')
-        # occurances of the string 'C:\'.  Not actually extracting the path
-        self._paths = re.compile(b'c:\\\\', re.IGNORECASE)
-        # occurances of http:// or https://.  Not actually extracting the URLs
-        self._urls = re.compile(b'https?://', re.IGNORECASE)
-        # occurances of the string prefix HKEY_.  No actually extracting registry names
-        self._registry = re.compile(b'HKEY_')
+        # occurances of strings starting with 'C:\'.
+        self._paths = re.compile(b'c:\\\\[\x21-\x7e]{,50}', re.IGNORECASE)
+        # occurances of urls starting with http:// or https://.
+        self._urls = re.compile(b'https?://[\x21-\x7e]{,50}', re.IGNORECASE)
+        # occurances of the string prefix HKEY_.
+        self._registry = re.compile(b'HKEY_[\x21-\x7e]{,50}')
         # crude evidence of an MZ header (dropper?) somewhere in the byte stream
         self._mz = re.compile(b'MZ')
 
@@ -674,10 +674,10 @@ class PEFeatureExtractor(object):
         string_extractor: StringExtractor = None
         general_file_info: GeneralFileInfo = None
         header_file_info: HeaderFileInfo = None
-        data_directories: DataDirectories = None
         section_info: SectionInfo = None
         imports_info: ImportsInfo = None
         exports_info: ExportsInfo = None
+        data_directories: DataDirectories = None
 
     named_features: Features
 
@@ -723,7 +723,7 @@ class PEFeatureExtractor(object):
 
     def raw_features(self, bytez):
         lief_errors = (lief.lief_errors.corrupted, lief.lief_errors.file_format_error, lief.lief_errors.file_error,
-                       lief.lief_errors.parsing_error, lief.lief_errors.read_out_of_bound,
+                       lief.lief_errors.parsing_error, lief.lief_errors.read_out_of_bound, lief.lief_errors.not_found,
                        RuntimeError)
         try:
             lief_binary = lief.PE.parse(list(bytez))

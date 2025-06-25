@@ -1,5 +1,6 @@
 import errno
 import os
+from collections import Counter
 
 import numpy as np
 
@@ -38,9 +39,9 @@ def list_stats(list, round_decimal=False):
         "min": min(list),
         "max": max(list),
         "avg": list_avg(list),
-        "median": np.percentile(list, 50),
-        "pc75": np.percentile(list, 75),
-        "pc90": np.percentile(list, 90),
+        "median": float(np.percentile(list, 50)),
+        "pc75": float(np.percentile(list, 75)),
+        "pc90": float(np.percentile(list, 90)),
         "all": sum(list),
         "length": len(list)
     }
@@ -49,6 +50,21 @@ def list_stats(list, round_decimal=False):
             if isinstance(v, float):
                 stats[k] = round(v, round_decimal)
     return stats
+
+
+def list_occurrences_nested(data):
+    flat_list = []
+    def flatten(item):
+        if isinstance(item, list):
+            for sub in item:
+                flatten(sub)
+        elif isinstance(item, str):
+            flat_list.append(item)
+        else:
+            pass
+    flatten(data)
+    counter = Counter(flat_list)
+    return sorted(counter.items(), key=lambda x: x[1], reverse=True)
 
 
 def dict_key_add(d, key, item=None, collect_as_list=False):
