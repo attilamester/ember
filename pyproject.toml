@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emberlib"
+version = "0.0.3"
+description = "EMBER feature extractor"
+readme = "src/ember/README.md"
+requires-python = ">= 3.8, < 3.9"
+keywords = ["sample", "setuptools", "development"]
+authors = [
+  { name="Attila Mester", email="attilamester21@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "lief==0.16.6",
+    "numpy>=1.24.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ember"]
+
+[project.urls]
+Homepage = "https://github.com/attilamester/ember"
