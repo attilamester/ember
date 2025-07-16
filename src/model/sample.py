@@ -3,7 +3,7 @@ from typing import Tuple
 
 import numpy as np
 
-from ember.features import PEFeatureExtractor
+from emberlib.features import PEFeatureExtractor
 from util.misc import display_size
 
 

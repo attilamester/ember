@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emberlib"
-version = "0.0.3"
+version = "0.0.7"
 description = "EMBER feature extractor"
-readme = "src/ember/README.md"
+readme = "src/emberlib/README.md"
 requires-python = ">= 3.8, < 3.9"
 keywords = ["sample", "setuptools", "development"]
 authors = [
@@ -26,7 +26,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["ember"]
+include = ["emberlib"]
 
 [project.urls]
 Homepage = "https://github.com/attilamester/ember"

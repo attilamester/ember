@@ -10,7 +10,7 @@ import numpy as np
 from data import DatasetProvider
 from data.bodmas import Bodmas
 from data.malimg import MalImg
-from ember.features import PEFeatureExtractor
+from emberlib.features import PEFeatureExtractor
 from model.sample import Sample
 from processors import process_samples
 from util import config
