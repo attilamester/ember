@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emberlib"
-version = "0.0.7"
+version = "1.0.0"
 description = "EMBER feature extractor"
 readme = "src/emberlib/README.md"
-requires-python = ">= 3.8, < 3.9"
-keywords = ["sample", "setuptools", "development"]
+requires-python = ">= 3.8, <= 3.10"
+keywords = ["static malware analysis", "EMBER features", "feature extraction"]
 authors = [
   { name="Attila Mester", email="attilamester21@gmail.com" },
 ]
@@ -18,7 +18,8 @@ classifiers = [
 ]
 dependencies = [
     "lief==0.16.6",
-    "numpy>=1.24.0"
+    "numpy>=1.22.0,<=2.2.6",
+    "scikit-learn>=1.1.0,<=1.7.1"
 ]
 
 [tool.setuptools]
