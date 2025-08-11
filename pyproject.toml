@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emberlib"
-version = "1.0.0"
+version = "1.0.1"
 description = "EMBER feature extractor"
 readme = "src/emberlib/README.md"
-requires-python = ">= 3.8, <= 3.10"
+requires-python = ">= 3.8, < 3.11"
 keywords = ["static malware analysis", "EMBER features", "feature extraction"]
 authors = [
   { name="Attila Mester", email="attilamester21@gmail.com" },
